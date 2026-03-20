@@ -6,6 +6,9 @@ data/
 models/
 results/
 
+# IDE
+.idea/
+
 # Кэш Python
 __pycache__/
 *.pyc
