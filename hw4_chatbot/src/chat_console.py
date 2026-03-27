@@ -20,7 +20,7 @@ from datetime import datetime
 # Импортируем наши модули
 from src.model import NeuralNet
 from src.nltk_utils import bag_of_words, tokenize, load_intents
-from src.utils import DATA_DIR, get_latest_model, ensure_dirs
+from src.utils import DATA_DIR, get_latest_model, ensure_dirs, LOGS_DIR
 
 # ==================== 1. ЗАГРУЗКА МОДЕЛИ ====================
 # Создаём папки, если их нет
@@ -29,33 +29,54 @@ ensure_dirs()
 # Определяем устройство (GPU если есть, иначе CPU)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Загружаем намерения
+# Загружаем намерения из файла intents.json
 intents_path = DATA_DIR / "intents.json"
 intents = load_intents(intents_path)
 
-# Загружаем последнюю обученную модель
+# Загружаем последнюю обученную модель (автоматически из папки models/)
 model_path = get_latest_model()
 print(f"Загрузка модели из: {model_path}")
 
 data = torch.load(model_path, map_location=device)
 
-# Извлекаем параметры модели
-input_size = data["input_size"]
-hidden_size = data["hidden_size"]
-output_size = data["output_size"]
-all_words = data['all_words']
-tags = data['tags']
-model_state = data["model_state"]
+# Извлекаем параметры модели, сохранённые при обучении
+input_size = data["input_size"]  # размер входного вектора (124 слова)
+hidden_size = data["hidden_size"]  # количество нейронов в скрытых слоях
+output_size = data["output_size"]  # количество намерений (6)
+all_words = data['all_words']  # словарь всех слов
+tags = data['tags']  # список намерений
+model_state = data["model_state"]  # веса модели
 
 # Создаём модель и загружаем веса
 model = NeuralNet(input_size, hidden_size, output_size).to(device)
 model.load_state_dict(model_state)
-model.eval()  # Переводим в режим оценки
+model.eval()  # Переводим в режим оценки (выключаем dropout)
 
 bot_name = "КиберПатруль"
 
 
 # ==================== 2. ФУНКЦИИ ДЛЯ РАБОТЫ БОТА ====================
+
+def get_subject_in_prepositional(subject: str) -> str:
+    """
+    Возвращает название предмета в предложном падеже (для вопроса "по ...").
+
+    Примеры:
+        "математика" -> "математике"
+        "русский язык" -> "русскому языку"
+        "человек и мир" -> "человеку и миру"
+    """
+    subjects_dict = {
+        "математика": "математике",
+        "русский язык": "русскому языку",
+        "английский язык": "английскому языку",
+        "белорусский язык": "белорусскому языку",
+        "история": "истории",
+        "литература": "литературе",
+        "человек и мир": "человеку и миру"
+    }
+    return subjects_dict.get(subject, subject)
+
 
 def predict_intent(text: str) -> tuple:
     """
@@ -67,10 +88,12 @@ def predict_intent(text: str) -> tuple:
     Returns:
         tuple: (намерение, уверенность)
     """
+    # Токенизируем текст и создаём bag-of-words вектор
     tokens = tokenize(text)
     bag = bag_of_words(tokens, all_words)
     bag_tensor = torch.tensor(bag, dtype=torch.float32).unsqueeze(0).to(device)
 
+    # Предсказываем намерение
     with torch.no_grad():
         output = model(bag_tensor)
         _, predicted = torch.max(output, dim=1)
@@ -83,16 +106,14 @@ def predict_intent(text: str) -> tuple:
 def assign_tasks(avg_score: float) -> list:
     """
     Назначает дополнительные задания в зависимости от среднего балла.
-    Главные задания (еда, посуда, одежда, уроки) уже выполнены на первом этапе,
-    поэтому здесь их не показываем.
 
-    Args:
-        avg_score (float): Средний балл (может быть None, если нет оценок)
-
-    Returns:
-        list: Список дополнительных заданий
+    Правила:
+        - avg_score >= 9: бонус, нет заданий
+        - avg_score >= 7: 1 бытовое задание
+        - avg_score >= 5: 2 задания (бытовое + учебное)
+        - avg_score < 5: 3 задания (2 бытовых + 1 учебное)
+        - avg_score is None (нет оценок): 2 задания (бытовое + учебное)
     """
-    # Бытовые задания
     house_tasks = [
         "🔄 Пропылесосить комнату",
         "🔄 Протереть пыль на полках",
@@ -104,7 +125,6 @@ def assign_tasks(avg_score: float) -> list:
         "🔄 Почистить обувь"
     ]
 
-    # Учебные задания
     study_tasks = [
         "📚 Решить 5 задач из учебника по математике",
         "📚 Прочитать 20 страниц внеклассного чтения",
@@ -114,7 +134,7 @@ def assign_tasks(avg_score: float) -> list:
         "📚 Написать сочинение-миниатюру (5–7 предложений)"
     ]
 
-    tasks = []  # Список дополнительных заданий (главные уже выполнены)
+    tasks = []
 
     if avg_score is None:
         # Нет оценок — среднее количество заданий
@@ -142,13 +162,8 @@ def assign_tasks(avg_score: float) -> list:
 def log_conversation(user_message: str, bot_response: str) -> None:
     """
     Сохраняет диалог в лог-файл.
-
-    Args:
-        user_message (str): Сообщение пользователя
-        bot_response (str): Ответ бота
+    Файл создаётся в папке results/logs/ с именем log_YYYYMMDD.txt
     """
-    from src.utils import LOGS_DIR
-
     log_file = LOGS_DIR / f"log_{datetime.now().strftime('%Y%m%d')}.txt"
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -160,13 +175,7 @@ def log_conversation(user_message: str, bot_response: str) -> None:
 
 def get_response_by_tag(tag: str) -> str:
     """
-    Возвращает случайный ответ из intents.json по тегу.
-
-    Args:
-        tag (str): Тег намерения
-
-    Returns:
-        str: Случайный ответ из intents.json
+    Возвращает случайный ответ из intents.json по тегу намерения.
     """
     for intent in intents['intents']:
         if intent['tag'] == tag:
@@ -190,10 +199,10 @@ def main():
     log_conversation("(начало диалога)", greeting)
 
     # ==================== СОСТОЯНИЕ ДИАЛОГА ====================
-    stage = "main_tasks"  # main_tasks -> subjects -> confirm_subjects -> grades -> password
-    lessons = []  # Список выбранных предметов
-    grades = {}  # Словарь оценок {предмет: оценка}
-    current_subject_index = 0  # Индекс текущего предмета для ввода оценки
+    stage = "main_tasks"  # текущий этап диалога
+    lessons = []  # список выбранных предметов
+    grades = {}  # словарь оценок {предмет: оценка}
+    current_subject_index = 0  # индекс текущего предмета для ввода оценки
 
     # Список всех возможных предметов
     SUBJECTS = [
@@ -210,7 +219,7 @@ def main():
     while True:
         user_input = input("Ты: ").strip()
 
-        # Проверка на пустой ввод
+        # Пропускаем пустой ввод
         if not user_input:
             continue
 
@@ -231,6 +240,7 @@ def main():
                 print(f"{bot_name}: {response}")
                 log_conversation(user_input, response)
 
+                # Переходим к выбору предметов
                 print(f"{bot_name}: Теперь выбери предметы, которые были сегодня.")
                 print(f"{bot_name}: Введи номера через пробел (например: 1 2 4):")
                 for i, subj in enumerate(SUBJECTS, 1):
@@ -241,13 +251,14 @@ def main():
                 response = get_response_by_tag("отказ")
                 print(f"{bot_name}: {response}")
                 log_conversation(user_input, response)
-                print(f"{bot_name}: Напиши 'готово', когда выполнишь все главные задания.")
+                print(f"{bot_name}: Напиши 'готово', когда выполнишь все главные задания:\n\n"
+                      "1. Поесть\n2. Сложить школьную одежду в шкаф\n3. Помыть посуду\n4. Сделать уроки")
             else:
-                print(f"{bot_name}: Напиши 'готово', когда выполнишь все главные задания.")
+                print(f"{bot_name}: Напиши 'готово', когда выполнишь все главные задания:\n\n"
+                      "1. Поесть\n2. Сложить школьную одежду в шкаф\n3. Помыть посуду\n4. Сделать уроки")
 
         # ========== ЭТАП 2: ВЫБОР ПРЕДМЕТОВ ==========
         elif stage == "subjects":
-            # Парсим номера предметов
             try:
                 # Извлекаем все числа из ввода
                 numbers = [int(x) for x in user_input.split() if x.isdigit()]
@@ -258,6 +269,7 @@ def main():
                     print(f"{bot_name}: Введи номера из списка (1–{len(SUBJECTS)}).")
                     continue
 
+                # Сохраняем выбранные предметы
                 lessons = [SUBJECTS[n - 1] for n in valid_numbers]
                 print(f"{bot_name}: Ты выбрал: {', '.join(lessons)}")
                 print("Всё верно? (да/нет)")
@@ -279,9 +291,12 @@ def main():
                     stage = "subjects"
                     continue
 
+                # Переходим к вводу оценок
                 stage = "grades"
                 current_subject_index = 0
-                print(f"{bot_name}: Какая оценка по {lessons[current_subject_index]}?")
+                first_subject = lessons[current_subject_index]
+                prep_subject = get_subject_in_prepositional(first_subject)
+                print(f"{bot_name}: Какая оценка по {prep_subject}? (если оценки не было, введи 'нет')")
 
             elif tag == "отказ" and prob > 0.75:
                 response = get_response_by_tag("отказ")
@@ -297,101 +312,123 @@ def main():
         elif stage == "grades":
             subject = lessons[current_subject_index]
 
-            # Исправленное регулярное выражение: сначала ищем 10, потом 1-9
-            digits = re.findall(r'\b(10|[1-9])\b', user_input)
+            # Проверка на "нет оценки" (принимаем только "нет" и "не было")
+            if user_input.lower() in ["нет", "не было"]:
+                prep_subject = get_subject_in_prepositional(subject)
+                print(f"{bot_name}: Принято. Оценки по {prep_subject} не было.")
+                grades[subject] = None  # Сохраняем None как признак отсутствия оценки
+                current_subject_index += 1
 
-            if digits:
-                grade = int(digits[0])
-                if 1 <= grade <= 10:
-                    grades[subject] = grade
-                    current_subject_index += 1
-
-                    if current_subject_index < len(lessons):
-                        next_subject = lessons[current_subject_index]
-                        print(f"{bot_name}: Какая оценка по {next_subject}?")
-                    else:
-                        # Все оценки собраны
-                        print(f"{bot_name}: Спасибо! Вот что я записал:")
-                        for s, g in grades.items():
+                if current_subject_index < len(lessons):
+                    next_subject = lessons[current_subject_index]
+                    prep_subject = get_subject_in_prepositional(next_subject)
+                    print(f"{bot_name}: Какая оценка по {prep_subject}? (если оценки не было, введи 'нет')")
+                else:
+                    # Все предметы обработаны — выводим список и сразу переходим к расчёту
+                    print(f"{bot_name}: Спасибо! Вот что я записал:")
+                    for s, g in grades.items():
+                        if g is None:
+                            print(f"  {s}: нет оценки")
+                        else:
                             print(f"  {s}: {g}")
-                        log_conversation(user_input, f"Записаны оценки: {grades}")
+                    log_conversation(user_input, f"Записаны оценки: {grades}")
 
-                        # Переходим к расчёту И сразу выводим результаты
-                        stage = "calculate"
+                    # Собираем только числовые оценки (игнорируем None)
+                    valid_grades = [g for g in grades.values() if g is not None]
 
-                        # ====== СРАЗУ ВЫПОЛНЯЕМ РАСЧЁТ ======
-                        valid_grades = list(grades.values())
+                    # Расчёт среднего балла
+                    if valid_grades:
+                        avg_score = sum(valid_grades) / len(valid_grades)
+                        print(f"{bot_name}: Твой средний балл сегодня: {avg_score:.1f}")
 
-                        if valid_grades:
-                            avg_score = sum(valid_grades) / len(valid_grades)
-                            print(f"{bot_name}: Твой средний балл сегодня: {avg_score:.1f}")
+                        if avg_score >= 9:
+                            print(f"{bot_name}: 🎉 Отлично! Ты молодец! Так держать!")
+                        elif avg_score >= 7:
+                            print(f"{bot_name}: 👍 Хорошо, но есть куда расти!")
+                        elif avg_score >= 5:
+                            print(f"{bot_name}: 📚 Неплохо, но нужно подтянуться!")
+                        else:
+                            print(f"{bot_name}: ⚠️ Низкий балл. Нужно исправляться!")
+                    else:
+                        avg_score = None
+                        print(f"{bot_name}: Сегодня не было оценок.")
+                        print("В следующий раз постарайся получить пятёрки!")
 
-                            if avg_score >= 9:
-                                print(f"{bot_name}: 🎉 Отлично! Ты молодец! Так держать!")
-                            elif avg_score >= 7:
-                                print(f"{bot_name}: 👍 Хорошо, но есть куда расти!")
-                            elif avg_score >= 5:
-                                print(f"{bot_name}: 📚 Неплохо, но нужно подтянуться!")
+                    # Назначаем дополнительные задания
+                    tasks = assign_tasks(avg_score)
+
+                    if tasks:
+                        print(f"{bot_name}: 📝 Дополнительные задания на сегодня:")
+                        for i, task in enumerate(tasks, 1):
+                            print(f"  {i}. {task}")
+                    else:
+                        print(f"{bot_name}: 🌟 Ты отлично справился! Дополнительных заданий нет!")
+
+                    print(f"{bot_name}: Когда выполнишь всё, напиши 'готово'.")
+                    stage = "password"
+            else:
+                # Обычная проверка цифр (оценка от 1 до 10)
+                digits = re.findall(r'\b(10|[1-9])\b', user_input)
+
+                if digits:
+                    grade = int(digits[0])
+                    if 1 <= grade <= 10:
+                        grades[subject] = grade
+                        current_subject_index += 1
+
+                        if current_subject_index < len(lessons):
+                            next_subject = lessons[current_subject_index]
+                            prep_subject = get_subject_in_prepositional(next_subject)
+                            print(f"{bot_name}: Какая оценка по {prep_subject}? (если оценки не было, введи 'нет')")
+                        else:
+                            # Все предметы обработаны — выводим список и сразу переходим к расчёту
+                            print(f"{bot_name}: Спасибо! Вот что я записал:")
+                            for s, g in grades.items():
+                                if g is None:
+                                    print(f"  {s}: нет оценки")
+                                else:
+                                    print(f"  {s}: {g}")
+                            log_conversation(user_input, f"Записаны оценки: {grades}")
+
+                            # Собираем только числовые оценки
+                            valid_grades = [g for g in grades.values() if g is not None]
+
+                            # Расчёт среднего балла
+                            if valid_grades:
+                                avg_score = sum(valid_grades) / len(valid_grades)
+                                print(f"{bot_name}: Твой средний балл сегодня: {avg_score:.1f}")
+
+                                if avg_score >= 9:
+                                    print(f"{bot_name}: 🎉 Отлично! Ты молодец! Так держать!")
+                                elif avg_score >= 7:
+                                    print(f"{bot_name}: 👍 Хорошо, но есть куда расти!")
+                                elif avg_score >= 5:
+                                    print(f"{bot_name}: 📚 Неплохо, но нужно подтянуться!")
+                                else:
+                                    print(f"{bot_name}: ⚠️ Низкий балл. Нужно исправляться!")
                             else:
-                                print(f"{bot_name}: ⚠️ Низкий балл. Нужно исправляться!")
-                        else:
-                            avg_score = None
-                            print(f"{bot_name}: Сегодня не было оценок.")
-                            print("В следующий раз постарайся получить пятёрки!")
+                                avg_score = None
+                                print(f"{bot_name}: Сегодня не было оценок.")
+                                print("В следующий раз постарайся получить хорошие оценки!")
 
-                        # Назначаем дополнительные задания
-                        tasks = assign_tasks(avg_score)
+                            # Назначаем дополнительные задания
+                            tasks = assign_tasks(avg_score)
 
-                        if tasks:
-                            print(f"{bot_name}: 📝 Дополнительные задания на сегодня:")
-                            for i, task in enumerate(tasks, 1):
-                                print(f"  {i}. {task}")
-                        else:
-                            print(f"{bot_name}: 🌟 Ты отлично справился! Дополнительных заданий нет!")
+                            if tasks:
+                                print(f"{bot_name}: 📝 Дополнительные задания на сегодня:")
+                                for i, task in enumerate(tasks, 1):
+                                    print(f"  {i}. {task}")
+                            else:
+                                print(f"{bot_name}: 🌟 Ты отлично справился! Дополнительных заданий нет!")
 
-                        print(f"{bot_name}: Когда выполнишь всё, напиши 'готово'.")
-                        stage = "password"
-                        # Конец расчёта, теперь ждём "готово"
+                            print(f"{bot_name}: Когда выполнишь всё, напиши 'готово'.")
+                            stage = "password"
+                    else:
+                        print(f"{bot_name}: Оценка должна быть от 1 до 10.")
                 else:
-                    print(f"{bot_name}: Оценка должна быть от 1 до 10.")
-            else:
-                print(f"{bot_name}: Введи цифру от 1 до 10.")
+                    print(f"{bot_name}: Введи цифру от 1 до 10 или напиши 'нет'.")
 
-        # ========== ЭТАП 4: РАСЧЁТ СРЕДНЕГО БАЛЛА И ЗАДАНИЯ ==========
-        elif stage == "calculate":
-            valid_grades = list(grades.values())
-
-            if valid_grades:
-                avg_score = sum(valid_grades) / len(valid_grades)
-                print(f"{bot_name}: Твой средний балл сегодня: {avg_score:.1f}")
-
-                if avg_score >= 9:
-                    print(f"{bot_name}: 🎉 Отлично! Ты молодец! Так держать!")
-                elif avg_score >= 7:
-                    print(f"{bot_name}: 👍 Хорошо, но есть куда расти!")
-                elif avg_score >= 5:
-                    print(f"{bot_name}: 📚 Неплохо, но нужно подтянуться!")
-                else:
-                    print(f"{bot_name}: ⚠️ Низкий балл. Нужно исправляться!")
-            else:
-                avg_score = None
-                print(f"{bot_name}: Сегодня не было оценок.")
-                print("В следующий раз постарайся получить пятёрки!")
-
-            # Назначаем дополнительные задания
-            tasks = assign_tasks(avg_score)
-
-            if tasks:
-                print(f"{bot_name}: 📝 Дополнительные задания на сегодня:")
-                for i, task in enumerate(tasks, 1):
-                    print(f"  {i}. {task}")
-            else:
-                print(f"{bot_name}: 🌟 Ты отлично справился! Дополнительных заданий нет!")
-
-            print(f"{bot_name}: Когда выполнишь всё, напиши 'готово'.")
-            stage = "password"
-
-        # ========== ЭТАП 5: ПАРОЛЬ ==========
+        # ========== ЭТАП 4: ПАРОЛЬ ==========
         elif stage == "password":
             if tag == "готово" and prob > 0.75:
                 response = get_response_by_tag("готово")
