@@ -1,0 +1,30 @@
+# Клон официального репозитория YOLOv5 (не храним в Git)
+yolov5/
+
+# Веса обученных моделей (большие файлы)
+models/*.pt
+
+# Виртуальное окружение
+.venv/
+
+# Временные файлы Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Файлы IDE
+.idea/
+.vscode/
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+
+# Видео (большие файлы)
+results/*/video/*.mp4
+data/test_video/*.mp4
+
+# Датасеты (большие папки)
+data/sofa_order_disorder/
+data/sofa_order_disorder_2/
