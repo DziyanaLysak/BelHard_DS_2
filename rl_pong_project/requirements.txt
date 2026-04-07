@@ -1,11 +1,6 @@
-gymnasium[atari]>=0.29.0
-gymnasium[accept-rom-license]>=0.29.0
-stable-baselines3>=2.0.0
-torch>=2.0.0
-ale-py>=0.8.0
-python-telegram-bot>=20.0
-opencv-python>=4.8.0
-imageio>=2.31.0
-imageio[ffmpeg]>=2.31.0
-numpy>=1.24.0
-gymnasium-2048>=0.1.0
+stable-baselines3==2.8.0
+gymnasium==1.2.3
+gymnasium-2048==0.1.0
+torch==2.11.0
+python-telegram-bot==22.7
+numpy==1.24.0
