@@ -2,26 +2,23 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости для pygame
+# Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y \
-    libsdl2-dev \
-    libsdl2-image-dev \
-    libsdl2-mixer-dev \
-    libsdl2-ttf-dev \
-    libportmidi-dev \
-    libfreetype6-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Копируем файлы проекта
+# Копируем requirements.txt и устанавливаем зависимости
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Клонируем gymnasium-2048 напрямую из GitHub
+RUN git clone https://github.com/Quentin18/gymnasium-2048.git
+RUN cd gymnasium-2048 && pip install -e .
+
+# Копируем остальной код проекта
 COPY models/ ./models/
 COPY src/ ./src/
 
-# Устанавливаем Python-зависимости
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Переменная для токена бота (устанавливается в Render)
 ENV TELEGRAM_TOKEN=""
 
-# Запуск бота
 CMD ["python", "src/bot.py"]
