@@ -1,0 +1,22 @@
+# Основные зависимости
+stable_baselines3==2.8.0
+gymnasium==1.2.1
+gymnasium_2048==0.1.0
+torch==2.11.0
+python-telegram-bot==22.7
+python-dotenv==1.2.2
+
+# NumPy
+numpy==2.4.4
+
+# Для изображений и GIF
+Pillow==12.2.0
+imageio==2.37.3
+imageio-ffmpeg==0.6.0
+
+# Для gymnasium-2048
+pygame==2.6.1
+
+# Дополнительные
+cloudpickle==3.1.2
+psutil==7.2.2

@@ -1,0 +1,28 @@
+# Секреты
+.env
+
+# Логи и временные файлы
+logs/
+temp/
+*.log
+*.gif
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Виртуальное окружение
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Мусор от gymnasium
+videos/
