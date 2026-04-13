@@ -93,7 +93,7 @@ rl_pong_project/
 
 ---
 
-## 🛠 Технологии
+##  Технологии
 
 - `Python 3.10`
 - `stable-baselines3` (PPO)
